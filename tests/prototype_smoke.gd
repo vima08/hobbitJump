@@ -26,6 +26,16 @@ func _run() -> void:
 		await RenderingServer.frame_post_draw
 		error = root.get_texture().get_image().save_png("res://artifacts/pause.png")
 		_check(error == OK, "Pause screenshot saved")
+		_level.get_node("HUD")._set_paused(false)
+		for lane in [0, 1]:
+			var ride := _nearest_float(lane, 0.0)
+			_player.position = ride.position + Vector3(0, 0.5, 0)
+			_player.velocity = Vector3.ZERO
+			_level.get_node("Camera").snap_to_target()
+			await _ticks(30)
+			await RenderingServer.frame_post_draw
+			error = root.get_texture().get_image().save_png("res://artifacts/riding-%d.png" % lane)
+			_check(error == OK, "Riding screenshot saved for kind %d" % lane)
 		quit(0 if _failures.is_empty() else 1)
 		return
 
@@ -37,6 +47,13 @@ func _run() -> void:
 	await _ticks(10)
 	_check(_player.position.z < initial.z - 0.5, "W moves toward top of camera")
 	_check(absf(_player.position.x - initial.x) < 0.05, "W does not drift sideways")
+	_player.respawn()
+	await _ticks(12)
+	_key(KEY_UP, true)
+	await _ticks(12)
+	_key(KEY_UP, false)
+	await _ticks(10)
+	_check(_player.position.z < initial.z - 0.5, "Up arrow moves toward top of camera")
 	_player.respawn()
 	await _ticks(12)
 	_joy_axis(JOY_AXIS_LEFT_X, 0.1)
@@ -116,35 +133,86 @@ func _run() -> void:
 	await _ticks(4)
 	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Water fall returns to dock")
 
+	for lane in [0, 1]:
+		var ride := _nearest_float(lane, 0.0)
+		_player.position = ride.position + Vector3(0, 0.5, 0)
+		_player.velocity = Vector3.ZERO
+		await _ticks(30)
+		_check(_player.is_on_floor(), "Player lands on float kind %d" % lane)
+		var relative_start := _player.position - ride.position
+		var world_start := ride.position
+		var max_error := 0.0
+		for frame in range(600):
+			await _ticks(1)
+			max_error = maxf(max_error, (_player.position - ride.position - relative_start).length())
+		_check(max_error < 0.05 and _player.is_on_floor(), "Float kind %d carries idle player for 10 simulated seconds (error %.4f)" % [lane, max_error])
+		_check(ride.position.x - world_start.x > 5.0, "Float really travels with the current")
+
+	# Pausing must freeze the current as well as the character.
+	var paused_float := _nearest_float(0, 0)
+	var float_at := paused_float.position
+	_level.get_node("HUD")._set_paused(true)
+	await _ticks(10)
+	_check(paused_float.position.is_equal_approx(float_at), "Pause freezes moving platforms")
+	_level.get_node("HUD")._set_paused(false)
+	_player.respawn()
+	await _ticks(12)
+
+	# A rider returns before reaching the recycle boundary.
+	var boundary_ride := _nearest_float(0, 20)
+	boundary_ride.position.x = 19.5
+	_player.position = boundary_ride.position + Vector3(0, 0.5, 0)
+	_player.velocity = Vector3.ZERO
+	await _ticks(30)
+	_check(_player.is_on_floor() and _player.position.x > 19, "Player rides near the downstream boundary")
+	await _ticks(90)
+	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Rider returns safely before platform recycling")
+
+	# Force the now empty platform across the recycle boundary outside play.
+	var recycling := _nearest_float(0, 20)
+	recycling.position.x = recycling.river_half_length - 0.001
+	await _ticks(4)
+	_check(recycling.position.x < -24.0 and recycling.collision_layer == 1, "Platform outside play recycles and restores collision")
+	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Recycling does not teleport or launch the player")
+
 	for attempt in range(3):
 		_player.respawn()
 		await _ticks(12)
-		await _walk_to(Vector3(0, 0, 3.0), false)
+		var first := _nearest_float(0, _player.position.x)
+		await _walk_to(Vector3(first.position.x, 0, 3.0), false)
 		var completed := true
-		for target in [Vector3(0, 0, 0.5), Vector3(1, 0, -2.5), Vector3(-0.7, 0, -5.5), Vector3(0.8, 0, -8.5), Vector3(0, 0, -11.5), Vector3(0, 0, -14.0)]:
+		for lane in range(6):
+			# Choose each landing from the actual takeoff, never a stale start position.
+			var target: Variant = _nearest_float(lane, _player.position.x) if lane < 5 else Vector3(clampf(_player.position.x, -5.0, 5.0), 0, -14.0)
 			await _walk_to(target, true)
-			var gap := Vector2(_player.position.x - target.x, _player.position.z - target.z).length()
+			var at := _target_position(target)
+			var gap := Vector2(_player.position.x - at.x, _player.position.z - at.z).length()
 			if gap > 0.5 or not _player.is_on_floor():
+				print("Route miss: target=", at, " player=", _player.position, " grounded=", _player.is_on_floor())
 				completed = false
 				break
-		_check(completed, "Static route completed, attempt %d" % (attempt + 1))
+		_check(completed, "Moving log/barrel route completed, attempt %d" % (attempt + 1))
 	_check(_level.get_node("HUD")._goal_reached, "Practice finish is detected")
 	var camera: Camera3D = _level.get_node("Camera")
 	await _ticks(40)
 	_check(not camera.is_position_behind(_player.position), "Following camera keeps player in front")
 	var screen_point := camera.unproject_position(_player.position)
 	_check(root.get_visible_rect().has_point(screen_point), "Player remains in viewport at finish")
+	if DisplayServer.get_name() != "headless":
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png("res://artifacts/route-finish.png")
 	print("PROTOTYPE TEST RESULT: %d failures" % _failures.size())
 	quit(0 if _failures.is_empty() else 1)
 
 
-func _walk_to(target: Vector3, jump: bool) -> void:
+func _walk_to(target: Variant, jump: bool) -> void:
 	if jump:
 		Input.action_press("jump")
 	await _ticks(1)
 	Input.action_release("jump")
 	for frame in range(70):
-		var offset := Vector2(target.x - _player.position.x, target.z - _player.position.z)
+		var at := _target_position(target)
+		var offset := Vector2(at.x - _player.position.x, at.z - _player.position.z)
 		var movement := offset.normalized() if offset.length() > 0.12 else Vector2.ZERO
 		Input.action_press("move_right", maxf(movement.x, 0.0))
 		Input.action_press("move_left", maxf(-movement.x, 0.0))
@@ -156,6 +224,24 @@ func _walk_to(target: Vector3, jump: bool) -> void:
 	for action in ["move_right", "move_left", "move_back", "move_forward"]:
 		Input.action_release(action)
 	await _ticks(8)
+
+
+func _target_position(target: Variant) -> Vector3:
+	if target is Node3D:
+		return Vector3(target.position.x, 0, target.position.z)
+	return target
+
+
+func _nearest_float(lane: int, x: float) -> AnimatableBody3D:
+	var nearest: AnimatableBody3D
+	var distance := INF
+	for platform in get_nodes_in_group("floating_platforms"):
+		if absf(platform.position.z - _level.PLATFORM_POSITIONS[lane].z) > 0.1:
+			continue
+		if absf(platform.position.x - x) < distance:
+			distance = absf(platform.position.x - x)
+			nearest = platform
+	return nearest
 
 
 func _ticks(count: int) -> void:

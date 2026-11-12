@@ -32,7 +32,7 @@ func _ready() -> void:
 	_controls.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_controls)
 	var note := Label.new()
-	note.text = "Прототип 01 • платформы пока неподвижны"
+	note.text = "Течение вправо → • стойте на платформе, чтобы плыть вместе с ней"
 	note.add_theme_font_size_override("font_size", 16)
 	column.add_child(note)
 	for label in [title, _status, _controls, note]:
@@ -99,7 +99,7 @@ func _on_joy_connection_changed(_device: int, _connected: bool) -> void:
 
 func _update_controls() -> void:
 	if Input.get_connected_joypads().is_empty():
-		_controls.text = "WASD — движение  •  Пробел — прыжок  •  R — на старт  •  Esc — пауза\nГеймпад: левый стик / крестовина • нижняя кнопка — прыжок • Start — пауза"
+		_controls.text = "Стрелки / WASD — движение  •  Пробел — прыжок  •  R — на старт  •  Esc — пауза\nГеймпад: левый стик / крестовина • нижняя кнопка — прыжок • Start — пауза"
 	else:
 		_controls.text = "Геймпад подключён • левый стик / крестовина — движение\nНижняя кнопка (A / Cross) — прыжок • верхняя (Y / Triangle) — на старт • Start — пауза"
 

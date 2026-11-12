@@ -45,7 +45,7 @@ func _physics_process(delta: float) -> void:
 
 	if direction.length_squared() > 0.01:
 		visual.rotation.y = lerp_angle(visual.rotation.y, atan2(direction.x, direction.z), 1.0 - exp(-14.0 * delta))
-	if global_position.y < fall_reset_height or Input.is_action_just_pressed("restart"):
+	if global_position.y < fall_reset_height or absf(global_position.x) > 20.0 or Input.is_action_just_pressed("restart"):
 		respawn()
 
 

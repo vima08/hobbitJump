@@ -2,11 +2,18 @@ extends Node3D
 
 const WOOD := Color("855539")
 const GRASS := Color("6f9560")
+const FloatingPlatform = preload("res://scripts/floating_platform.gd")
 const PLATFORM_POSITIONS: Array[Vector3] = [
 	Vector3(0, -0.3, 0.5), Vector3(1.0, -0.3, -2.5),
 	Vector3(-0.7, -0.3, -5.5), Vector3(0.8, -0.3, -8.5),
 	Vector3(0, -0.3, -11.5),
 ]
+var _water_streaks: Array[MeshInstance3D] = []
+
+
+func _physics_process(delta: float) -> void:
+	for streak in _water_streaks:
+		streak.position.x = wrapf(streak.position.x + 0.75 * delta, -24.5, 24.5)
 
 
 func _ready() -> void:
@@ -65,35 +72,39 @@ func _build_environment() -> void:
 	sun.light_energy = 0.9
 	sun.shadow_enabled = true
 	add_child(sun)
-	_box(self, Vector3(45, 0.15, 65), Vector3(0, -0.8, -8), Color("378f9d"))
-	# Decorative streaks suggest the future current; the water has no collision.
+	_box(self, Vector3(65, 0.15, 45), Vector3(0, -0.8, -5), Color("378f9d"))
+	# The river flows left to right; both banks and streaks follow that direction.
 	for index in range(26):
-		var x := -16.0 + fmod(float(index) * 4.7, 32.0)
-		var z := -27.0 + fmod(float(index) * 7.1, 45.0)
-		_box(self, Vector3(0.07, 0.015, 1.8), Vector3(x, -0.71, z), Color("62acb2"))
-	_platform("LeftBank", Vector3(9, 2, 65), Vector3(-15, -1, -8), GRASS)
-	_platform("RightBank", Vector3(9, 2, 65), Vector3(15, -1, -8), GRASS)
+		var x := -24.0 + fmod(float(index) * 4.7, 48.0)
+		var z := -16.0 + fmod(float(index) * 7.1, 24.0)
+		_water_streaks.append(_box(self, Vector3(1.8, 0.015, 0.07), Vector3(x, -0.71, z), Color("62acb2")))
+	_platform("StartBank", Vector3(65, 2, 9), Vector3(0, -1, 12), GRASS)
+	_platform("EndBank", Vector3(65, 2, 9), Vector3(0, -1, -21), GRASS)
 	for side in [-1, 1]:
 		for index in range(8):
-			var at := Vector3(float(side) * (12.5 + float(index % 2) * 3.0), 0, 7.0 - index * 5.5)
+			var at := Vector3(-21.0 + index * 6.0, 0, 11.0 if side == 1 else -20.0)
 			_box(self, Vector3(0.45, 2.4, 0.45), at + Vector3(0, 1.2, 0), WOOD)
 			_box(self, Vector3(2.5, 2.8, 2.5), at + Vector3(0, 3.0, 0), Color("51734e"))
 
 
 func _build_course() -> void:
-	_platform("StartDock", Vector3(5.5, 0.6, 5.0), Vector3(0, -0.3, 5), WOOD)
+	_platform("StartDock", Vector3(11, 0.6, 5.0), Vector3(0, -0.3, 5), WOOD)
 	for index in range(PLATFORM_POSITIONS.size()):
-		var platform := _platform("PracticePlatform%d" % (index + 1), Vector3(2.2, 0.6, 1.8), PLATFORM_POSITIONS[index], WOOD.lightened(0.04 * (index % 2)))
-		# Pale edges make landing surfaces readable in the prototype.
-		_box(platform, Vector3(2.2, 0.025, 0.08), Vector3(0, 0.315, -0.85), Color("d3b780"))
-	_platform("EndDock", Vector3(5.5, 0.6, 4), Vector3(0, -0.3, -15), WOOD)
+		for copy in range(-3, 4):
+			var platform := AnimatableBody3D.new()
+			platform.set_script(FloatingPlatform)
+			platform.name = "Float%d_%d" % [index, copy + 3]
+			platform.kind = index % 2
+			platform.position = PLATFORM_POSITIONS[index] + Vector3(copy * 7.0, 0, 0)
+			add_child(platform)
+	_platform("EndDock", Vector3(11, 0.6, 4), Vector3(0, -0.3, -15), WOOD)
 	_box(self, Vector3(0.12, 2.3, 0.12), Vector3(-1.8, 1.15, -15), Color("d9c7a1"))
 	_box(self, Vector3(0.9, 0.55, 0.06), Vector3(-1.3, 2.0, -15), Color("d4b35c"))
 	var goal := Area3D.new()
 	goal.name = "PracticeGoal"
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(5.5, 2, 3)
+	shape.size = Vector3(11, 2, 3)
 	collision.shape = shape
 	goal.add_child(collision)
 	add_child(goal)
