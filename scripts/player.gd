@@ -58,6 +58,10 @@ func respawn() -> void:
 	respawned.emit()
 
 
+func set_checkpoint(at: Vector3) -> void:
+	spawn_position = at
+
+
 func suppress_menu_jump() -> void:
 	# A / Cross also confirms menu buttons; resuming must not start a jump.
 	_jump_buffer = 0.0

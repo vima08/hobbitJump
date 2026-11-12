@@ -36,10 +36,30 @@ func _run() -> void:
 			await RenderingServer.frame_post_draw
 			error = root.get_texture().get_image().save_png("res://artifacts/riding-%d.png" % lane)
 			_check(error == OK, "Riding screenshot saved for kind %d" % lane)
+		for location in [Vector3(0, 0.05, -24), Vector3(6, 0.05, -55.5)]:
+			_player.position = location
+			_player.velocity = Vector3.ZERO
+			_level.get_node("Camera").snap_to_target()
+			await _ticks(20)
+			await RenderingServer.frame_post_draw
+			var filename := "checkpoint" if location.z > -30 else "shore-joint"
+			error = root.get_texture().get_image().save_png("res://artifacts/%s.png" % filename)
+			_check(error == OK, "Location screenshot saved: " + filename)
+		_player.position = Vector3(0, 0.05, -53)
+		_player.velocity = Vector3.ZERO
+		_level.get_node("Camera").snap_to_target()
+		await _ticks(5)
+		await RenderingServer.frame_post_draw
+		error = root.get_texture().get_image().save_png("res://artifacts/victory.png")
+		_check(error == OK, "Victory screenshot saved")
 		quit(0 if _failures.is_empty() else 1)
 		return
 
 	_check(_player.is_on_floor(), "Player settles on starting dock")
+	var end_shape: BoxShape3D = _level.get_node("EndDock").get_child(0).shape
+	var bank_shape: BoxShape3D = _level.get_node("EndBank").get_child(0).shape
+	_check(is_equal_approx(_level.get_node("EndDock").position.z - end_shape.size.z * 0.5, _level.get_node("EndBank").position.z + bank_shape.size.z * 0.5), "Final dock and bank meet without coplanar overlap")
+	_check(_level.LANE_SPEEDS.min() < _level.LANE_SPEEDS.max(), "River lanes have distinct speeds")
 	var initial := _player.position
 	_key(KEY_W, true)
 	await _ticks(12)
@@ -146,7 +166,7 @@ func _run() -> void:
 			await _ticks(1)
 			max_error = maxf(max_error, (_player.position - ride.position - relative_start).length())
 		_check(max_error < 0.05 and _player.is_on_floor(), "Float kind %d carries idle player for 10 simulated seconds (error %.4f)" % [lane, max_error])
-		_check(ride.position.x - world_start.x > 5.0, "Float really travels with the current")
+		_check(absf(ride.position.x - world_start.x - ride.drift_speed * 10.0) < 0.05, "Float really travels at its configured speed")
 
 	# Pausing must freeze the current as well as the character.
 	var paused_float := _nearest_float(0, 0)
@@ -176,31 +196,39 @@ func _run() -> void:
 	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Recycling does not teleport or launch the player")
 
 	for attempt in range(3):
-		_player.respawn()
-		await _ticks(12)
-		var first := _nearest_float(0, _player.position.x)
-		await _walk_to(Vector3(first.position.x, 0, 3.0), false)
-		var completed := true
-		for lane in range(6):
-			# Choose each landing from the actual takeoff, never a stale start position.
-			var target: Variant = _nearest_float(lane, _player.position.x) if lane < 5 else Vector3(clampf(_player.position.x, -5.0, 5.0), 0, -14.0)
-			await _walk_to(target, true)
-			var at := _target_position(target)
-			var gap := Vector2(_player.position.x - at.x, _player.position.z - at.z).length()
-			if gap > 0.5 or not _player.is_on_floor():
-				print("Route miss: target=", at, " player=", _player.position, " grounded=", _player.is_on_floor())
-				completed = false
-				break
-		_check(completed, "Moving log/barrel route completed, attempt %d" % (attempt + 1))
-	_check(_level.get_node("HUD")._goal_reached, "Practice finish is detected")
-	var camera: Camera3D = _level.get_node("Camera")
-	await _ticks(40)
-	_check(not camera.is_position_behind(_player.position), "Following camera keeps player in front")
-	var screen_point := camera.unproject_position(_player.position)
-	_check(root.get_visible_rect().has_point(screen_point), "Player remains in viewport at finish")
-	if DisplayServer.get_name() != "headless":
-		await RenderingServer.frame_post_draw
-		root.get_texture().get_image().save_png("res://artifacts/route-finish.png")
+		await _reload_run()
+		await _ticks(attempt * 437 + 15)
+		var route_start: float = _level.get_node("HUD")._elapsed_seconds
+		var completed := await _cross_route(attempt == 0)
+		_check(completed, "Full variable-speed route completed, phase %d" % attempt)
+		print("ROUTE DURATION: ", _level.get_node("HUD")._elapsed_seconds - route_start)
+		if not completed:
+			continue
+		var hud := _level.get_node("HUD")
+		_check(hud._goal_reached and paused and hud._victory_panel.visible, "Finish opens victory and freezes the world")
+		_check(not hud._controls.visible, "Victory hides obsolete gameplay hints")
+		var camera: Camera3D = _level.get_node("Camera")
+		_check(root.get_visible_rect().has_point(camera.unproject_position(_player.position)), "Player remains visible at finish")
+		var finished_time: float = hud._elapsed_seconds
+		var finished_at := _player.position
+		_joy_button(JOY_BUTTON_START, true)
+		await _ticks(5)
+		_joy_button(JOY_BUTTON_START, false)
+		hud._set_paused(false)
+		await _ticks(5)
+		_check(paused and hud._elapsed_seconds == finished_time and _player.position.is_equal_approx(finished_at), "Victory cannot be dismissed as an ordinary pause")
+		if DisplayServer.get_name() != "headless" and attempt == 0:
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png("res://artifacts/route-finish.png")
+		# Activate the actual focused victory button through the gamepad binding.
+		_joy_button(JOY_BUTTON_A, true)
+		await _ticks(1)
+		_joy_button(JOY_BUTTON_A, false)
+		await _ticks(5)
+		_level = current_scene
+		_player = _level.get_node("Player")
+		hud = _level.get_node("HUD")
+		_check(not paused and not hud._goal_reached and not hud._checkpoint_reached and hud._returns == 0 and hud._elapsed_seconds < 0.3 and _player.spawn_position.is_equal_approx(_level.START_POSITION), "Victory restart resets checkpoint, timer, counters and pause")
 	print("PROTOTYPE TEST RESULT: %d failures" % _failures.size())
 	quit(0 if _failures.is_empty() else 1)
 
@@ -211,6 +239,8 @@ func _walk_to(target: Variant, jump: bool) -> void:
 	await _ticks(1)
 	Input.action_release("jump")
 	for frame in range(70):
+		if paused:
+			break
 		var at := _target_position(target)
 		var offset := Vector2(at.x - _player.position.x, at.z - _player.position.z)
 		var movement := offset.normalized() if offset.length() > 0.12 else Vector2.ZERO
@@ -227,9 +257,56 @@ func _walk_to(target: Variant, jump: bool) -> void:
 
 
 func _target_position(target: Variant) -> Vector3:
+	if target is Dictionary:
+		return Vector3(target.platform.position.x + target.offset, 0, target.platform.position.z)
 	if target is Node3D:
 		return Vector3(target.position.x, 0, target.position.z)
 	return target
+
+
+func _reload_run() -> void:
+	paused = false
+	reload_current_scene()
+	await scene_changed
+	_level = current_scene
+	_player = _level.get_node("Player")
+
+
+func _cross_route(check_respawn: bool) -> bool:
+	for section in range(2):
+		var first := _nearest_float(section * 8, _player.position.x)
+		await _walk_to(Vector3(clampf(first.position.x, -4.8 if section == 0 else -15.0, 4.8 if section == 0 else 15.0), 0, 3.0 if section == 0 else -25.5), false)
+		for lane in range(section * 8, section * 8 + 8):
+			if not await _jump_to_lane(lane):
+				print("ROUTE FAILED at lane ", lane, " player ", _player.position)
+				return false
+		var dock_z := -22.8 if section == 0 else -50.5
+		var dock_x := clampf(_player.position.x, -15.0, 15.0)
+		await _walk_to(Vector3(dock_x, 0, dock_z), true)
+		if not _player.is_on_floor() or absf(_player.position.z - dock_z) > 0.5:
+			return false
+		await _walk_to(Vector3(dock_x, 0, -24 if section == 0 else -53), false)
+		if section == 0:
+			_check(_player.spawn_position.is_equal_approx(_level.CHECKPOINT_POSITION), "Checkpoint is activated by actual traversal")
+			if check_respawn:
+				_player.position.y = -1.2
+				await _ticks(5)
+				_check(_player.position.distance_to(_level.CHECKPOINT_POSITION) < 0.2, "Fall after checkpoint returns to the intermediate dock")
+	return _level.get_node("HUD")._goal_reached
+
+
+func _jump_to_lane(lane: int) -> bool:
+	for frame in range(1200):
+		var platform := _nearest_float(lane, _player.position.x)
+		var future_x: float = platform.position.x + platform.drift_speed * 0.7
+		var offset := clampf(_player.position.x - future_x, -0.65, 0.65)
+		if absf(future_x + offset - _player.position.x) < 1.6:
+			await _walk_to({"platform": platform, "offset": offset}, true)
+			return _player.is_on_floor() and absf(_player.position.z - platform.position.z) < 0.6 and absf(_player.position.x - platform.position.x) < 1.4
+		await _ticks(1)
+		if not _player.is_on_floor() or absf(_player.position.x) > 19:
+			return false
+	return false
 
 
 func _nearest_float(lane: int, x: float) -> AnimatableBody3D:
