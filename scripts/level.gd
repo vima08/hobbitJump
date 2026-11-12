@@ -5,6 +5,7 @@ const GRASS := Color("6f9560")
 const FloatingPlatform = preload("res://scripts/floating_platform.gd")
 const TREE: PackedScene = preload("res://assets/third_party/kenney_survival/tree.glb")
 const TALL_TREE: PackedScene = preload("res://assets/third_party/kenney_survival/tree-tall.glb")
+const WATER_SHADER: Shader = preload("res://shaders/river.gdshader")
 const START_POSITION := Vector3(0, 0.05, 4.5)
 const CHECKPOINT_POSITION := Vector3(0, 0.05, -24)
 const END_POSITION := Vector3(0, 0.05, -52)
@@ -21,18 +22,31 @@ const PLATFORM_POSITIONS: Array[Vector3] = [
 	Vector3(0, -0.3, -45.5), Vector3(-0.4, -0.3, -48.5),
 ]
 var _water_streaks: Array[MeshInstance3D] = []
+var _water_material: ShaderMaterial
+var _river_time := 0.0
+var _closing := false
 
 
 func _physics_process(delta: float) -> void:
+	_river_time += delta
+	_water_material.set_shader_parameter("river_time", _river_time)
 	for streak in _water_streaks:
 		streak.position.x = wrapf(streak.position.x + 0.75 * delta, -24.5, 24.5)
 
 
 func _ready() -> void:
+	get_tree().auto_accept_quit = false
 	_build_environment()
 	_build_course()
-	_build_hero()
 	$Player.respawned.connect($Camera.snap_to_target)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and not _closing:
+		_closing = true
+		get_tree().paused = true
+		await $Feedback.prepare_shutdown()
+		get_tree().quit()
 
 
 func _material(color: Color) -> StandardMaterial3D:
@@ -64,6 +78,9 @@ func _platform(label: String, size: Vector3, at: Vector3, color: Color) -> Stati
 	collision.shape = shape
 	body.add_child(collision)
 	_box(body, size, Vector3.ZERO, color)
+	if label.ends_with("Dock"):
+		for index in range(1, int(size.z / 0.5)):
+			_box(body, Vector3(size.x - 0.08, 0.008, 0.018), Vector3(0, size.y * 0.5 + 0.006, -size.z * 0.5 + index * 0.5), WOOD.darkened(0.25))
 	return body
 
 
@@ -84,7 +101,10 @@ func _build_environment() -> void:
 	sun.light_energy = 0.9
 	sun.shadow_enabled = true
 	add_child(sun)
-	_box(self, Vector3(65, 0.15, 80), Vector3(0, -0.8, -24), Color("378f9d"))
+	var water := _box(self, Vector3(65, 0.15, 80), Vector3(0, -0.8, -24), Color("378f9d"))
+	_water_material = ShaderMaterial.new()
+	_water_material.shader = WATER_SHADER
+	water.material_override = _water_material
 	# The river flows left to right; both banks and streaks follow that direction.
 	for index in range(70):
 		var x := -24.0 + fmod(float(index) * 4.7, 48.0)
@@ -171,14 +191,16 @@ func _build_house() -> void:
 	door.rotation.x = PI / 2.0
 	door.position = Vector3(0, 1.0, -56.06)
 	_box(self, Vector3(0.14, 0.14, 0.08), Vector3(0.5, 1.0, -55.98), Color("ddb65c"))
+	for x in [-1.8, 1.8]:
+		var window := MeshInstance3D.new()
+		var window_mesh := CylinderMesh.new()
+		window_mesh.top_radius = 0.37
+		window_mesh.bottom_radius = 0.37
+		window_mesh.height = 0.06
+		window_mesh.radial_segments = 16
+		window.mesh = window_mesh
+		window.material_override = _material(Color("f1ce79"))
+		add_child(window)
+		window.rotation.x = PI / 2.0
+		window.position = Vector3(x, 1.5, -56.07)
 	_box(self, Vector3(2.4, 0.02, 1.5), Vector3(0, 0.02, -55.25), Color("b9ab82"))
-
-
-func _build_hero() -> void:
-	var visual: Node3D = $Player/Visual
-	$Player/Visual/Body.material_override = _material(Color("718047"))
-	_box(visual, Vector3(0.43, 0.28, 0.4), Vector3(0, 1.0, 0), Color("d5ad7e"))
-	_box(visual, Vector3(0.48, 0.16, 0.46), Vector3(0, 1.18, -0.04), Color("58402c"))
-	for side in [-1, 1]:
-		_box(visual, Vector3(0.24, 0.13, 0.45), Vector3(float(side) * 0.17, 0.08, 0.12), Color("d5ad7e"))
-		_box(visual, Vector3(0.06, 0.06, 0.035), Vector3(float(side) * 0.12, 1.04, 0.215), Color("342e29"))

@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/level.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2"]
 [ext_resource type="Script" path="res://scripts/follow_camera.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/feedback.gd" id="5"]
 
 [node name="RiverPrototype" type="Node3D"]
 script = ExtResource("1")
@@ -22,3 +23,6 @@ target = NodePath("../Player")
 [node name="HUD" type="CanvasLayer" parent="."]
 process_mode = 3
 script = ExtResource("4")
+
+[node name="Feedback" type="Node3D" parent="."]
+script = ExtResource("5")

@@ -1,5 +1,8 @@
 extends CanvasLayer
 
+signal checkpoint_celebrated
+signal victory_celebrated
+
 var _status: Label
 var _controls: Label
 var _note: Label
@@ -8,6 +11,7 @@ var _victory_panel: PanelContainer
 var _victory_details: Label
 var _resume: Button
 var _victory_restart: Button
+var _sound_toggle: CheckButton
 var _goal_reached := false
 var _checkpoint_reached := false
 var _elapsed_seconds := 0.0
@@ -61,9 +65,19 @@ func _ready() -> void:
 	var restart := _button("Начать заново")
 	menu.add_child(restart)
 	restart.pressed.connect(restart_run)
+	_sound_toggle = CheckButton.new()
+	_sound_toggle.text = "Звук"
+	_sound_toggle.button_pressed = not AudioServer.is_bus_mute(0)
+	_sound_toggle.custom_minimum_size.y = 44
+	menu.add_child(_sound_toggle)
+	_sound_toggle.toggled.connect(func(enabled: bool) -> void: AudioServer.set_bus_mute(0, not enabled))
 	menu.add_child(_label("Esc / Start — продолжить\nR / Y / Triangle — начать заново", 15))
 	_link_focus(_resume, restart)
 	_link_focus(restart, _resume)
+	_resume.focus_neighbor_top = _resume.get_path_to(_sound_toggle)
+	restart.focus_neighbor_bottom = restart.get_path_to(_sound_toggle)
+	_sound_toggle.focus_neighbor_top = _sound_toggle.get_path_to(restart)
+	_sound_toggle.focus_neighbor_bottom = _sound_toggle.get_path_to(_resume)
 	_pause_panel.hide()
 
 	_victory_panel = _center_panel(root)
@@ -125,6 +139,7 @@ func show_checkpoint() -> void:
 	if _goal_reached:
 		return
 	_checkpoint_reached = true
+	checkpoint_celebrated.emit()
 	_note.text = "Контрольный причал достигнут. Теперь возвращаемся сюда."
 	_update_status()
 
@@ -133,6 +148,7 @@ func show_goal() -> void:
 	if _goal_reached:
 		return
 	_goal_reached = true
+	victory_celebrated.emit()
 	_status.text = "Вы добрались до другого берега!"
 	_controls.hide()
 	_note.hide()

@@ -16,11 +16,26 @@ func _run() -> void:
 	_level = current_scene
 	_player = _level.get_node("Player")
 	await _ticks(15)
+	if "--close-window" in OS.get_cmdline_user_args():
+		_level.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+		return
 	if "--capture" in OS.get_cmdline_user_args():
 		await RenderingServer.frame_post_draw
 		DirAccess.make_dir_recursive_absolute("res://artifacts")
 		var error := root.get_texture().get_image().save_png("res://artifacts/prototype.png")
 		_check(error == OK, "Rendered screenshot saved")
+		var portrait_camera: Camera3D = _level.get_node("Camera")
+		portrait_camera.set_process(false)
+		portrait_camera.position = _player.position + Vector3(1.4, 1.7, 2.8)
+		portrait_camera.look_at(_player.position + Vector3(0, 0.7, 0))
+		portrait_camera.fov = 35.0
+		await process_frame
+		await RenderingServer.frame_post_draw
+		error = root.get_texture().get_image().save_png("res://artifacts/character.png")
+		_check(error == OK, "Character portrait saved (inspection camera)")
+		portrait_camera.fov = 50.0
+		portrait_camera.set_process(true)
+		portrait_camera.snap_to_target()
 		_level.get_node("HUD")._set_paused(true)
 		await process_frame
 		await RenderingServer.frame_post_draw
@@ -36,6 +51,14 @@ func _run() -> void:
 			await RenderingServer.frame_post_draw
 			error = root.get_texture().get_image().save_png("res://artifacts/riding-%d.png" % lane)
 			_check(error == OK, "Riding screenshot saved for kind %d" % lane)
+		_player.position = Vector3(0, -1.2, 1.8)
+		_player.velocity = Vector3.ZERO
+		_level.get_node("Camera").snap_to_target()
+		await _ticks(12)
+		await RenderingServer.frame_post_draw
+		error = root.get_texture().get_image().save_png("res://artifacts/splash.png")
+		_check(error == OK, "Water splash screenshot saved")
+		await _ticks(40)
 		for location in [Vector3(0, 0.05, -24), Vector3(6, 0.05, -55.5)]:
 			_player.position = location
 			_player.velocity = Vector3.ZERO
@@ -52,10 +75,13 @@ func _run() -> void:
 		await RenderingServer.frame_post_draw
 		error = root.get_texture().get_image().save_png("res://artifacts/victory.png")
 		_check(error == OK, "Victory screenshot saved")
-		quit(0 if _failures.is_empty() else 1)
+		await _finish()
 		return
 
 	_check(_player.is_on_floor(), "Player settles on starting dock")
+	var feedback := _level.get_node("Feedback")
+	_check(_player.get_node("Visual")._left_leg != null and _player.get_node("Visual")._right_arm != null, "Blender model exposes animated limb pivots")
+	_check(feedback._river.stream.get_length() > 4.9 and feedback._river.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD, "River audio is a looping sample")
 	var end_shape: BoxShape3D = _level.get_node("EndDock").get_child(0).shape
 	var bank_shape: BoxShape3D = _level.get_node("EndBank").get_child(0).shape
 	_check(is_equal_approx(_level.get_node("EndDock").position.z - end_shape.size.z * 0.5, _level.get_node("EndBank").position.z + bank_shape.size.z * 0.5), "Final dock and bank meet without coplanar overlap")
@@ -63,6 +89,7 @@ func _run() -> void:
 	var initial := _player.position
 	_key(KEY_W, true)
 	await _ticks(12)
+	_check(absf(_player.get_node("Visual")._left_leg.rotation.x) > 0.05, "Walking animates the model's legs")
 	_key(KEY_W, false)
 	await _ticks(10)
 	_check(_player.position.z < initial.z - 0.5, "W moves toward top of camera")
@@ -139,6 +166,23 @@ func _run() -> void:
 	await _ticks(2)
 	_joy_axis(JOY_AXIS_LEFT_Y, 0.0)
 	_check(root.gui_get_focus_owner() == continue_button, "Stick navigates back to Continue")
+	_joy_button(JOY_BUTTON_DPAD_UP, true)
+	await _ticks(2)
+	_joy_button(JOY_BUTTON_DPAD_UP, false)
+	_check(root.gui_get_focus_owner() == _level.get_node("HUD")._sound_toggle, "Sound toggle is reachable with the controller")
+	_joy_button(JOY_BUTTON_A, true)
+	await _ticks(2)
+	_joy_button(JOY_BUTTON_A, false)
+	await _ticks(2)
+	_check(AudioServer.is_bus_mute(0), "Sound can be muted in pause")
+	_joy_button(JOY_BUTTON_A, true)
+	await _ticks(2)
+	_joy_button(JOY_BUTTON_A, false)
+	await _ticks(2)
+	_check(not AudioServer.is_bus_mute(0), "Sound can be restored in pause")
+	_joy_button(JOY_BUTTON_DPAD_DOWN, true)
+	await _ticks(2)
+	_joy_button(JOY_BUTTON_DPAD_DOWN, false)
 	_joy_button(JOY_BUTTON_A, true)
 	await _ticks(2)
 	_joy_button(JOY_BUTTON_A, false)
@@ -150,8 +194,13 @@ func _run() -> void:
 	await _ticks(50)
 
 	_player.position = Vector3(6, -1.2, 0)
-	await _ticks(4)
+	await _ticks(2)
+	_check(not _player.visual.visible and not feedback._effects.is_empty(), "Water fall starts a splash before returning")
+	await _ticks(40)
 	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Water fall returns to dock")
+	_check(_player.visual.visible, "Hero is visible again after the water return")
+	await _ticks(40)
+	_check(feedback._effects.is_empty(), "Transient splash and landing effects are cleaned up")
 
 	for lane in [0, 1]:
 		var ride := _nearest_float(lane, 0.0)
@@ -166,14 +215,17 @@ func _run() -> void:
 			await _ticks(1)
 			max_error = maxf(max_error, (_player.position - ride.position - relative_start).length())
 		_check(max_error < 0.05 and _player.is_on_floor(), "Float kind %d carries idle player for 10 simulated seconds (error %.4f)" % [lane, max_error])
+		_check(absf(_player.get_node("Visual")._left_leg.rotation.x) < 0.01, "Idle rider does not run on the moving platform")
 		_check(absf(ride.position.x - world_start.x - ride.drift_speed * 10.0) < 0.05, "Float really travels at its configured speed")
 
 	# Pausing must freeze the current as well as the character.
 	var paused_float := _nearest_float(0, 0)
 	var float_at := paused_float.position
+	var water_time: float = _level._river_time
 	_level.get_node("HUD")._set_paused(true)
 	await _ticks(10)
 	_check(paused_float.position.is_equal_approx(float_at), "Pause freezes moving platforms")
+	_check(_level._river_time == water_time, "Pause freezes shader ripple time")
 	_level.get_node("HUD")._set_paused(false)
 	_player.respawn()
 	await _ticks(12)
@@ -185,7 +237,10 @@ func _run() -> void:
 	_player.velocity = Vector3.ZERO
 	await _ticks(30)
 	_check(_player.is_on_floor() and _player.position.x > 19, "Player rides near the downstream boundary")
-	await _ticks(90)
+	for frame in range(240):
+		await _ticks(1)
+		if _player.position.distance_to(_player.spawn_position) < 0.2:
+			break
 	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Rider returns safely before platform recycling")
 
 	# Force the now empty platform across the recycle boundary outside play.
@@ -207,6 +262,7 @@ func _run() -> void:
 		var hud := _level.get_node("HUD")
 		_check(hud._goal_reached and paused and hud._victory_panel.visible, "Finish opens victory and freezes the world")
 		_check(not hud._controls.visible, "Victory hides obsolete gameplay hints")
+		_check(_level.get_node("Feedback")._sounds["victory"].process_mode == Node.PROCESS_MODE_ALWAYS, "Victory sound remains active while the world is paused")
 		var camera: Camera3D = _level.get_node("Camera")
 		_check(root.get_visible_rect().has_point(camera.unproject_position(_player.position)), "Player remains visible at finish")
 		var finished_time: float = hud._elapsed_seconds
@@ -230,6 +286,12 @@ func _run() -> void:
 		hud = _level.get_node("HUD")
 		_check(not paused and not hud._goal_reached and not hud._checkpoint_reached and hud._returns == 0 and hud._elapsed_seconds < 0.3 and _player.spawn_position.is_equal_approx(_level.START_POSITION), "Victory restart resets checkpoint, timer, counters and pause")
 	print("PROTOTYPE TEST RESULT: %d failures" % _failures.size())
+	await _finish()
+
+
+func _finish() -> void:
+	paused = true
+	await current_scene.get_node("Feedback").prepare_shutdown()
 	quit(0 if _failures.is_empty() else 1)
 
 
@@ -290,7 +352,7 @@ func _cross_route(check_respawn: bool) -> bool:
 			_check(_player.spawn_position.is_equal_approx(_level.CHECKPOINT_POSITION), "Checkpoint is activated by actual traversal")
 			if check_respawn:
 				_player.position.y = -1.2
-				await _ticks(5)
+				await _ticks(40)
 				_check(_player.position.distance_to(_level.CHECKPOINT_POSITION) < 0.2, "Fall after checkpoint returns to the intermediate dock")
 	return _level.get_node("HUD")._goal_reached
 
