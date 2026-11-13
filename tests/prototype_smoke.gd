@@ -1,5 +1,6 @@
 extends SceneTree
 ## Exercises the real scene, physics and Input Map. No physical controller is emulated.
+const CoursePath = preload("res://scripts/course_path.gd")
 
 var _failures: Array[String] = []
 var _player: CharacterBody3D
@@ -25,6 +26,7 @@ func _run() -> void:
 		var error := root.get_texture().get_image().save_png("res://artifacts/prototype.png")
 		_check(error == OK, "Rendered screenshot saved")
 		var portrait_camera: Camera3D = _level.get_node("Camera")
+		var original_fov := portrait_camera.fov
 		portrait_camera.set_process(false)
 		portrait_camera.position = _player.position + Vector3(1.4, 1.7, 2.8)
 		portrait_camera.look_at(_player.position + Vector3(0, 0.7, 0))
@@ -33,7 +35,7 @@ func _run() -> void:
 		await RenderingServer.frame_post_draw
 		error = root.get_texture().get_image().save_png("res://artifacts/character.png")
 		_check(error == OK, "Character portrait saved (inspection camera)")
-		portrait_camera.fov = 50.0
+		portrait_camera.fov = original_fov
 		portrait_camera.set_process(true)
 		portrait_camera.snap_to_target()
 		_level.get_node("HUD")._set_paused(true)
@@ -59,7 +61,7 @@ func _run() -> void:
 		error = root.get_texture().get_image().save_png("res://artifacts/splash.png")
 		_check(error == OK, "Water splash screenshot saved")
 		await _ticks(40)
-		for location in [Vector3(0, 0.05, -24), Vector3(6, 0.05, -55.5)]:
+		for location in [_level.CHECKPOINT_POSITION, Vector3(CoursePath.center_x(-55.5) + 6, 0.05, -55.5)]:
 			_player.position = location
 			_player.velocity = Vector3.ZERO
 			_level.get_node("Camera").snap_to_target()
@@ -68,7 +70,7 @@ func _run() -> void:
 			var filename := "checkpoint" if location.z > -30 else "shore-joint"
 			error = root.get_texture().get_image().save_png("res://artifacts/%s.png" % filename)
 			_check(error == OK, "Location screenshot saved: " + filename)
-		_player.position = Vector3(0, 0.05, -53)
+		_player.position = Vector3(CoursePath.center_x(-53), 0.05, -53)
 		_player.velocity = Vector3.ZERO
 		_level.get_node("Camera").snap_to_target()
 		await _ticks(5)
@@ -81,6 +83,14 @@ func _run() -> void:
 	_check(_player.is_on_floor(), "Player settles on starting dock")
 	var feedback := _level.get_node("Feedback")
 	_check(_player.get_node("Visual")._left_leg != null and _player.get_node("Visual")._right_arm != null, "Blender model exposes animated limb pivots")
+	var hero_surface: MeshInstance3D = _player.get_node("Visual")._model.find_child("TorsoSurface", true, false)
+	var imported_colors: PackedColorArray = hero_surface.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+	var has_skin := false
+	var has_cloth := false
+	for pigment in imported_colors:
+		has_skin = has_skin or pigment.a < 0.3
+		has_cloth = has_cloth or (pigment.a > 0.45 and pigment.a < 0.8)
+	_check(has_skin and has_cloth, "Imported hero retains distinct skin and cloth categories")
 	_check(feedback._river.stream.get_length() > 4.9 and feedback._river.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD, "River audio is a looping sample")
 	var end_shape: BoxShape3D = _level.get_node("EndDock").get_child(0).shape
 	var bank_shape: BoxShape3D = _level.get_node("EndBank").get_child(0).shape
@@ -203,7 +213,9 @@ func _run() -> void:
 	_check(feedback._effects.is_empty(), "Transient splash and landing effects are cleaned up")
 
 	for lane in [0, 1]:
-		var ride := _nearest_float(lane, 0.0)
+		# Start upstream so the ten-second carry stays within the playable bank.
+		# The separate boundary scenario below verifies the eventual return.
+		var ride := _nearest_float(lane, CoursePath.center_x(_level.PLATFORM_POSITIONS[lane].z) - 6.0)
 		_player.position = ride.position + Vector3(0, 0.5, 0)
 		_player.velocity = Vector3.ZERO
 		await _ticks(30)
@@ -231,12 +243,13 @@ func _run() -> void:
 	await _ticks(12)
 
 	# A rider returns before reaching the recycle boundary.
-	var boundary_ride := _nearest_float(0, 20)
-	boundary_ride.position.x = 19.5
+	var lane_center := CoursePath.center_x(_level.PLATFORM_POSITIONS[0].z)
+	var boundary_ride := _nearest_float(0, lane_center + _player.playable_half_width)
+	boundary_ride.position.x = lane_center + _player.playable_half_width - 0.5
 	_player.position = boundary_ride.position + Vector3(0, 0.5, 0)
 	_player.velocity = Vector3.ZERO
 	await _ticks(30)
-	_check(_player.is_on_floor() and _player.position.x > 19, "Player rides near the downstream boundary")
+	_check(_player.is_on_floor() and _player.position.x - lane_center > _player.playable_half_width - 0.6, "Player rides near the downstream boundary")
 	for frame in range(240):
 		await _ticks(1)
 		if _player.position.distance_to(_player.spawn_position) < 0.2:
@@ -245,9 +258,9 @@ func _run() -> void:
 
 	# Force the now empty platform across the recycle boundary outside play.
 	var recycling := _nearest_float(0, 20)
-	recycling.position.x = recycling.river_half_length - 0.001
+	recycling.position.x = recycling.lane_center_x + recycling.river_half_length - 0.001
 	await _ticks(4)
-	_check(recycling.position.x < -24.0 and recycling.collision_layer == 1, "Platform outside play recycles and restores collision")
+	_check(recycling.position.x - recycling.lane_center_x < -24.0 and recycling.collision_layer == 1, "Platform outside play recycles and restores collision")
 	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Recycling does not teleport or launch the player")
 
 	for attempt in range(3):
@@ -320,13 +333,14 @@ func _walk_to(target: Variant, jump: bool) -> void:
 
 func _target_position(target: Variant) -> Vector3:
 	if target is Dictionary:
-		return Vector3(target.platform.position.x + target.offset, 0, target.platform.position.z)
+		return Vector3(target.platform.position.x + target.offset, 0, target.platform.position.z + target.get("z_offset", 0.0))
 	if target is Node3D:
 		return Vector3(target.position.x, 0, target.position.z)
 	return target
 
 
 func _reload_run() -> void:
+	_release_movement()
 	paused = false
 	reload_current_scene()
 	await scene_changed
@@ -337,13 +351,17 @@ func _reload_run() -> void:
 func _cross_route(check_respawn: bool) -> bool:
 	for section in range(2):
 		var first := _nearest_float(section * 8, _player.position.x)
-		await _walk_to(Vector3(clampf(first.position.x, -4.8 if section == 0 else -15.0, 4.8 if section == 0 else 15.0), 0, 3.0 if section == 0 else -25.5), false)
+		var dock_center: float = 0.0 if section == 0 else _level.CHECKPOINT_POSITION.x
+		var dock_half_width := 4.8 if section == 0 else 8.0
+		await _walk_to(Vector3(clampf(first.position.x, dock_center - dock_half_width, dock_center + dock_half_width), 0, 3.0 if section == 0 else -25.5), false)
 		for lane in range(section * 8, section * 8 + 8):
 			if not await _jump_to_lane(lane):
 				print("ROUTE FAILED at lane ", lane, " player ", _player.position)
 				return false
+			await _after_route_landing(lane)
 		var dock_z := -22.8 if section == 0 else -50.5
-		var dock_x := clampf(_player.position.x, -15.0, 15.0)
+		dock_center = _level.CHECKPOINT_POSITION.x if section == 0 else _level.END_POSITION.x
+		var dock_x := clampf(_player.position.x, dock_center - 7.0, dock_center + 7.0)
 		await _walk_to(Vector3(dock_x, 0, dock_z), true)
 		if not _player.is_on_floor() or absf(_player.position.z - dock_z) > 0.5:
 			return false
@@ -357,18 +375,91 @@ func _cross_route(check_respawn: bool) -> bool:
 	return _level.get_node("HUD")._goal_reached
 
 
+func _after_route_landing(_lane: int) -> void:
+	pass
+
+
 func _jump_to_lane(lane: int) -> bool:
+	if lane % 8 != 0:
+		var source := _nearest_float(lane - 1, _player.position.x)
+		await _walk_to({"platform": source, "offset": clampf(_player.position.x - source.position.x, -1.0, 1.0), "z_offset": -0.65}, false)
 	for frame in range(1200):
-		var platform := _nearest_float(lane, _player.position.x)
-		var future_x: float = platform.position.x + platform.drift_speed * 0.7
-		var offset := clampf(_player.position.x - future_x, -0.65, 0.65)
-		if absf(future_x + offset - _player.position.x) < 1.6:
-			await _walk_to({"platform": platform, "offset": offset}, true)
+		var current: AnimatableBody3D = null
+		var dock_center: float = 0.0 if lane == 0 else _level.CHECKPOINT_POSITION.x
+		var dock_half_width := 4.8 if lane == 0 else 8.0
+		var safe_left := dock_center - dock_half_width
+		var safe_right := dock_center + dock_half_width
+		var next_center := CoursePath.center_x(_level.PLATFORM_POSITIONS[lane].z)
+		if lane % 8 != 0:
+			current = _nearest_float(lane - 1, _player.position.x)
+			var half_width := 1.3 if current.kind == 0 else 1.1
+			safe_left = current.position.x - half_width
+			safe_right = current.position.x + half_width
+		var platform: AnimatableBody3D = null
+		var offset := 0.0
+		var target_x := 0.0
+		var best_score := INF
+		for candidate in get_nodes_in_group("floating_platforms"):
+			if absf(candidate.position.z - _level.PLATFORM_POSITIONS[lane].z) > 0.1:
+				continue
+			var future_x: float = candidate.position.x + candidate.drift_speed * 0.7
+			var desired_x := clampf(next_center, future_x - 0.95, future_x + 0.95)
+			# Consider both edges of our current deck before choosing a column.
+			var launch_x := clampf(desired_x, safe_left, safe_right)
+			if absf(desired_x - launch_x) > 2.7 or absf(desired_x - next_center) > 7.5:
+				continue
+			# Look through the remaining section before boarding a raft that could
+			# carry us into a dead end. Re-evaluate this estimate at every landing;
+			# all actual movement and success checks still use the scene physics.
+			if lane % 8 != 7 and not _has_following_landing(candidate, lane + 1):
+				continue
+			var score := absf(desired_x - next_center) + absf(desired_x - _player.position.x) * 0.1
+			if score < best_score:
+				best_score = score
+				platform = candidate
+				offset = desired_x - future_x
+				target_x = desired_x
+		if platform != null and absf(target_x - _player.position.x) < 2.7:
+			_release_movement()
+			print("ROUTE JUMP lane ", lane, " from ", _player.position, " to ", platform.position, " offset ", offset)
+			await _walk_to({"platform": platform, "offset": offset, "z_offset": 0.3}, true)
 			return _player.is_on_floor() and absf(_player.position.z - platform.position.z) < 0.6 and absf(_player.position.x - platform.position.x) < 1.4
+		# Wait on the centre-facing edge if no safe next landing is available.
+		var safe_x := clampf(target_x if platform != null else next_center, safe_left, safe_right)
+		if frame % 180 == 0:
+			print("ROUTE WAIT lane ", lane, " player ", _player.position, " safe ", safe_left, "..", safe_right, " next ", platform, " target ", target_x)
+		var direction := clampf((safe_x - _player.position.x) * 3.0, -1.0, 1.0)
+		Input.action_press("move_left", maxf(-direction, 0))
+		Input.action_press("move_right", maxf(direction, 0))
 		await _ticks(1)
-		if not _player.is_on_floor() or absf(_player.position.x) > 19:
+		if not _player.is_on_floor() or absf(_player.position.x - CoursePath.center_x(_player.position.z)) > _player.playable_half_width - 0.1:
+			_release_movement()
 			return false
+	_release_movement()
 	return false
+
+
+func _has_following_landing(candidate: AnimatableBody3D, following_lane: int, time_ahead: float = 0.0) -> bool:
+	var following_z: float = _level.PLATFORM_POSITIONS[following_lane].z
+	var following_center := CoursePath.center_x(following_z)
+	var deck_center: float = candidate.position.x + candidate.drift_speed * (time_ahead + 1.5)
+	var half_width := 1.3 if candidate.kind == 0 else 1.1
+	for following in get_nodes_in_group("floating_platforms"):
+		if absf(following.position.z - following_z) > 0.1:
+			continue
+		var landing_x: float = following.position.x + following.drift_speed * (time_ahead + 2.2)
+		landing_x = clampf(following_center, landing_x - 0.95, landing_x + 0.95)
+		if absf(landing_x - following_center) > 7.5:
+			continue
+		if absf(landing_x - clampf(landing_x, deck_center - half_width, deck_center + half_width)) < 2.7:
+			if following_lane % 8 == 7 or _has_following_landing(following, following_lane + 1, time_ahead + 1.5):
+				return true
+	return false
+
+
+func _release_movement() -> void:
+	for action in ["move_right", "move_left", "move_back", "move_forward", "jump"]:
+		Input.action_release(action)
 
 
 func _nearest_float(lane: int, x: float) -> AnimatableBody3D:

@@ -26,7 +26,7 @@ func _ready() -> void:
 	var margin := MarginContainer.new()
 	root.add_child(margin)
 	margin.position = Vector2(20, 16)
-	margin.custom_minimum_size.x = 420
+	margin.custom_minimum_size.x = 320
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var panel := PanelContainer.new()
 	margin.add_child(panel)
@@ -37,21 +37,23 @@ func _ready() -> void:
 	panel.add_child(column)
 	var title := Label.new()
 	title.text = "Хоббит: вниз по реке"
-	title.add_theme_font_size_override("font_size", 23)
+	title.add_theme_font_size_override("font_size", 18)
 	column.add_child(title)
 	_status = Label.new()
-	_status.add_theme_font_size_override("font_size", 17)
+	_status.add_theme_font_size_override("font_size", 14)
 	column.add_child(_status)
 	_controls = Label.new()
 	_controls.add_theme_font_size_override("font_size", 15)
 	_controls.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_controls.custom_minimum_size.x = 400
+	_controls.custom_minimum_size.x = 300
 	column.add_child(_controls)
+	_controls.hide()
 	_note = Label.new()
 	_note.text = "Течение вправо → · скорости рядов различаются."
 	_note.add_theme_font_size_override("font_size", 14)
 	_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_note)
+	_note.hide()
 
 	_pause_panel = _center_panel(root)
 	var menu := VBoxContainer.new()
@@ -127,8 +129,10 @@ func _set_paused(value: bool) -> void:
 	_pause_panel.visible = value
 	_victory_panel.hide()
 	if value:
+		_controls.show()
 		_resume.grab_focus()
 	else:
+		_controls.hide()
 		var focused := get_viewport().gui_get_focus_owner()
 		if focused != null:
 			focused.release_focus()

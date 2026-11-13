@@ -1,5 +1,7 @@
 extends CharacterBody3D
 
+const CoursePath = preload("res://scripts/course_path.gd")
+
 signal respawned
 signal jumped
 signal landed(at: Vector3)
@@ -10,6 +12,7 @@ signal fell_into_water(at: Vector3)
 @export var jump_speed: float = 7.5
 @export var gravity: float = 20.0
 @export var fall_reset_height: float = -1.0
+@export var playable_half_width: float = 8.5
 @export var camera: Camera3D
 
 var spawn_position: Vector3 = Vector3(0, 0.05, 4.5)
@@ -68,7 +71,7 @@ func _physics_process(delta: float) -> void:
 		_respawn_timer = 0.42
 		velocity = Vector3.ZERO
 		visual.hide()
-	elif absf(global_position.x) > 20.0 or Input.is_action_just_pressed("restart"):
+	elif absf(global_position.x - CoursePath.center_x(global_position.z)) > playable_half_width or Input.is_action_just_pressed("restart"):
 		respawn()
 
 
