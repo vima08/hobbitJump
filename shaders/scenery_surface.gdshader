@@ -2,6 +2,9 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform float foliage = 0.0;
+uniform vec3 camera_cutout_start = vec3(0.0);
+uniform vec3 camera_cutout_end = vec3(0.0);
+uniform float camera_cutout_radius = 0.0;
 uniform sampler2D painted_atlas : source_color, filter_linear_mipmap, repeat_disable;
 varying vec3 world_position;
 varying vec3 object_position;
@@ -28,6 +31,15 @@ vec3 painted(vec2 uv, vec2 tile) {
 }
 void fragment() {
 	vec3 p = world_position;
+	if (camera_cutout_radius > 0.0) {
+		vec3 segment = camera_cutout_end - camera_cutout_start;
+		float along = clamp(dot(p - camera_cutout_start, segment) / max(dot(segment, segment), 0.001), 0.0, 1.0);
+		float distance_to_view = distance(p, camera_cutout_start + segment * along);
+		float cutout = 1.0 - smoothstep(camera_cutout_radius * 0.65, camera_cutout_radius, distance_to_view);
+		// Opaque dithering works in Compatibility without transparent sorting.
+		float threshold = fract(dot(floor(FRAGCOORD.xy), vec2(0.754877666, 0.569840296)));
+		if (cutout > threshold) { discard; }
+	}
 	float large = noise3(p * 0.85);
 	float fine = noise3(p * 9.0);
 	float grain = noise3(p * 38.0);

@@ -27,9 +27,9 @@ func _run() -> void:
 	var first := _nearest_float(0, CoursePath.center_x(_level.PLATFORM_POSITIONS[0].z))
 	await _walk_to(Vector3(first.position.x, 0, 3.0), false)
 	_key(KEY_UP, true)
-	_key(KEY_SPACE, true)
+	_key(KEY_Z, true)
 	await _ticks(1)
-	_key(KEY_SPACE, false)
+	_key(KEY_Z, false)
 	for index in range(9):
 		await _ticks(5)
 		if index == 6:

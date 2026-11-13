@@ -94,7 +94,7 @@ func _ready() -> void:
 	victory.add_child(_victory_restart)
 	_victory_restart.pressed.connect(restart_run)
 	_link_focus(_victory_restart, _victory_restart)
-	victory.add_child(_label("Enter / A / Cross — выбрать\nR / Y / Triangle — начать заново", 15))
+	victory.add_child(_label("Enter / Z / A / Cross — выбрать\nR / Y / Triangle — начать заново", 15))
 	_victory_panel.hide()
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	get_parent().get_node("Player").respawned.connect(_on_respawned)
@@ -177,7 +177,7 @@ func _on_joy_connection_changed(_device: int, _connected: bool) -> void:
 
 func _update_controls() -> void:
 	if Input.get_connected_joypads().is_empty():
-		_controls.text = "Стрелки / WASD — движение · Пробел — прыжок\nR — на причал · Esc — пауза"
+		_controls.text = "Стрелки — движение · Z — прыжок\nR — на причал · Esc — пауза"
 	else:
 		_controls.text = "Стик / крестовина — движение · A / Cross — прыжок\nY / Triangle — на причал · Start — пауза"
 

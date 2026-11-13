@@ -9,10 +9,12 @@ static var _solid_materials: Dictionary = {}
 
 @export var kind: Kind = Kind.LOG
 @export var drift_speed: float = 0.55
-@export var river_half_length: float = 24.5
 @export var lane_center_x: float = 0.0
 @export_range(0, 2) var visual_variant: int = 0
 var _restore_collision := false
+const FALL_CREST := 23.0
+const RECYCLE_X := 30.0
+const LOOP_LENGTH := 56.0
 
 
 func _ready() -> void:
@@ -21,7 +23,7 @@ func _ready() -> void:
 	process_physics_priority = -10
 	add_to_group("floating_platforms")
 	_build_shape()
-	visible = absf(position.x - lane_center_x) < 14.0
+	visible = true
 
 
 func _physics_process(delta: float) -> void:
@@ -29,11 +31,16 @@ func _physics_process(delta: float) -> void:
 		collision_layer = 1
 		_restore_collision = false
 	position.x += drift_speed * delta
-	visible = absf(position.x - lane_center_x) < 14.0
-	if position.x - lane_center_x > river_half_length:
-		# No collision during recycling outside the playable area.
+	var fall_time := maxf(0.0, position.x - FALL_CREST) / drift_speed
+	position.y = -0.3 - 4.0 * fall_time * fall_time
+	rotation.z = -minf(fall_time * 0.45, 0.8)
+	visible = position.y > -14.0
+	if position.x > RECYCLE_X:
+		# The whole hull is deep below the lower pool, never underneath a rider.
 		collision_layer = 0
-		position.x -= river_half_length * 2.0
+		position.x -= LOOP_LENGTH
+		position.y = -0.3
+		rotation.z = 0.0
 		reset_physics_interpolation()
 		_restore_collision = true
 
@@ -41,7 +48,8 @@ func _physics_process(delta: float) -> void:
 func _build_shape() -> void:
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(3.0, 0.6, 1.8) if kind == Kind.LOG else Vector3(2.6, 0.6, 1.8)
+	# Capsule radius is 0.28: inset each edge 0.19 m limits centre overhang.
+	shape.size = Vector3(2.62, 0.6, 1.42) if kind == Kind.LOG else Vector3(2.22, 0.6, 1.42)
 	collision.shape = shape
 	add_child(collision)
 	var cache_key := int(kind) * 3 + visual_variant
@@ -57,7 +65,9 @@ func _build_shape() -> void:
 			log_body.rotation.y = PI / 2.0
 			log_body.position = Vector3(0, -0.06, z)
 			_paint_log(log_body)
-			_box(Vector3(2.95 - visual_variant * 0.08, 0.06, 0.18), Vector3(0.04 * visual_variant, 0.27, z), Color("ad7a50"))
+		# A continuous walkable deck, with narrow cosmetic seams only.
+		for plank in range(5):
+			_box(Vector3(3.0, 0.12, 0.345), Vector3(0, 0.24, -0.72 + plank * 0.36), Color("ad7a50"))
 		for x in [-1.0, 1.0]:
 			_box(Vector3(0.12, 0.035, 1.7), Vector3(x, 0.305, 0), Color("bea878"))
 	else:
@@ -65,7 +75,7 @@ func _build_shape() -> void:
 			_barrel(x)
 		# A flat plank deck matches the deliberately forgiving box collider.
 		for plank in range(5):
-			_box(Vector3(2.6 - (0.08 if plank % 2 == visual_variant else 0.0), 0.12, 0.345), Vector3(0, 0.24, -0.72 + plank * 0.36), Color("b18050"))
+			_box(Vector3(2.6, 0.12, 0.345), Vector3(0, 0.24, -0.72 + plank * 0.36), Color("b18050"))
 	_batch_visuals()
 
 

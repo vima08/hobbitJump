@@ -1,6 +1,7 @@
 extends SceneTree
 ## Exercises the real scene, physics and Input Map. No physical controller is emulated.
 const CoursePath = preload("res://scripts/course_path.gd")
+const ROUTE_GUIDE_HALF_WIDTH := 8.5
 
 var _failures: Array[String] = []
 var _player: CharacterBody3D
@@ -97,17 +98,18 @@ func _run() -> void:
 	_check(is_equal_approx(_level.get_node("EndDock").position.z - end_shape.size.z * 0.5, _level.get_node("EndBank").position.z + bank_shape.size.z * 0.5), "Final dock and bank meet without coplanar overlap")
 	_check(_level.LANE_SPEEDS.min() < _level.LANE_SPEEDS.max(), "River lanes have distinct speeds")
 	var initial := _player.position
-	_key(KEY_W, true)
-	await _ticks(12)
-	_check(absf(_player.get_node("Visual")._left_leg.rotation.x) > 0.05, "Walking animates the model's legs")
-	_key(KEY_W, false)
-	await _ticks(10)
-	_check(_player.position.z < initial.z - 0.5, "W moves toward top of camera")
-	_check(absf(_player.position.x - initial.x) < 0.05, "W does not drift sideways")
+	for code in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_SPACE]:
+		_key(code, true)
+		await _ticks(12)
+		_check(_player.position.distance_to(initial) < 0.01, "Unassigned key cannot move or jump: %s" % code)
+		_check(Input.get_vector("move_left", "move_right", "move_forward", "move_back").is_zero_approx() and not Input.is_action_pressed("jump"), "Unassigned key has no gameplay action: %s" % code)
+		_key(code, false)
+		await _ticks(2)
 	_player.respawn()
 	await _ticks(12)
 	_key(KEY_UP, true)
 	await _ticks(12)
+	_check(_player.locomotion_velocity.length() > 1.0, "Walking produces actual motion relative to support")
 	_key(KEY_UP, false)
 	await _ticks(10)
 	_check(_player.position.z < initial.z - 0.5, "Up arrow moves toward top of camera")
@@ -142,16 +144,16 @@ func _run() -> void:
 	_joy_button(JOY_BUTTON_A, false)
 	_check(_player.position.y > 0.2, "Gamepad bottom button jumps")
 	var upward_speed := _player.velocity.y
-	_key(KEY_SPACE, true)
+	_key(KEY_Z, true)
 	await _ticks(3)
-	_key(KEY_SPACE, false)
+	_key(KEY_Z, false)
 	_check(_player.velocity.y < upward_speed, "Second press cannot double jump")
 	await _ticks(55)
 	_check(_player.is_on_floor(), "Player lands after jump")
-	_key(KEY_SPACE, true)
+	_key(KEY_Z, true)
 	await _ticks(4)
-	_key(KEY_SPACE, false)
-	_check(_player.position.y > 0.2, "Space jumps from dock")
+	_key(KEY_Z, false)
+	_check(_player.position.y > 0.2, "Z jumps from dock")
 	await _ticks(55)
 	_joy_button(JOY_BUTTON_Y, true)
 	await _ticks(2)
@@ -227,7 +229,7 @@ func _run() -> void:
 			await _ticks(1)
 			max_error = maxf(max_error, (_player.position - ride.position - relative_start).length())
 		_check(max_error < 0.05 and _player.is_on_floor(), "Float kind %d carries idle player for 10 simulated seconds (error %.4f)" % [lane, max_error])
-		_check(absf(_player.get_node("Visual")._left_leg.rotation.x) < 0.01, "Idle rider does not run on the moving platform")
+		_check(_player.locomotion_velocity.length() < 0.02, "Idle rider has no walking velocity relative to carrier")
 		_check(absf(ride.position.x - world_start.x - ride.drift_speed * 10.0) < 0.05, "Float really travels at its configured speed")
 
 	# Pausing must freeze the current as well as the character.
@@ -242,25 +244,27 @@ func _run() -> void:
 	_player.respawn()
 	await _ticks(12)
 
-	# A rider returns before reaching the recycle boundary.
+	# The old invisible boundary is now ordinary navigable river.
 	var lane_center := CoursePath.center_x(_level.PLATFORM_POSITIONS[0].z)
-	var boundary_ride := _nearest_float(0, lane_center + _player.playable_half_width)
-	boundary_ride.position.x = lane_center + _player.playable_half_width - 0.5
+	var boundary_ride := _nearest_float(0, lane_center + ROUTE_GUIDE_HALF_WIDTH)
+	boundary_ride.position.x = lane_center + ROUTE_GUIDE_HALF_WIDTH - 0.5
 	_player.position = boundary_ride.position + Vector3(0, 0.5, 0)
 	_player.velocity = Vector3.ZERO
 	await _ticks(30)
-	_check(_player.is_on_floor() and _player.position.x - lane_center > _player.playable_half_width - 0.6, "Player rides near the downstream boundary")
+	_check(_player.is_on_floor() and _player.position.x - lane_center > ROUTE_GUIDE_HALF_WIDTH - 0.6, "Player rides near the former downstream boundary")
 	for frame in range(240):
 		await _ticks(1)
 		if _player.position.distance_to(_player.spawn_position) < 0.2:
 			break
-	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Rider returns safely before platform recycling")
+	_check(_player.is_on_floor() and _player.position.x - lane_center > ROUTE_GUIDE_HALF_WIDTH, "Rider crosses old boundary without an invisible return")
+	_player.respawn()
+	await _ticks(12)
 
 	# Force the now empty platform across the recycle boundary outside play.
 	var recycling := _nearest_float(0, 20)
-	recycling.position.x = recycling.lane_center_x + recycling.river_half_length - 0.001
+	recycling.position.x = recycling.RECYCLE_X - 0.001
 	await _ticks(4)
-	_check(recycling.position.x - recycling.lane_center_x < -24.0 and recycling.collision_layer == 1, "Platform outside play recycles and restores collision")
+	_check(recycling.position.x < -24.0 and recycling.collision_layer == 1, "Platform below the gorge recycles at upstream inlet and restores collision")
 	_check(_player.position.distance_to(_player.spawn_position) < 0.2, "Recycling does not teleport or launch the player")
 
 	for attempt in range(3):
@@ -318,7 +322,9 @@ func _walk_to(target: Variant, jump: bool) -> void:
 			break
 		var at := _target_position(target)
 		var offset := Vector2(at.x - _player.position.x, at.z - _player.position.z)
-		var movement := offset.normalized() if offset.length() > 0.12 else Vector2.ZERO
+		# Brake as the target approaches; the narrower physical deck no longer
+		# tolerates the old full-speed overshoot at its front edge.
+		var movement := offset.normalized() * minf(1.0, offset.length() * 7.0 / _player.move_speed) if offset.length() > 0.05 else Vector2.ZERO
 		Input.action_press("move_right", maxf(movement.x, 0.0))
 		Input.action_press("move_left", maxf(-movement.x, 0.0))
 		Input.action_press("move_back", maxf(movement.y, 0.0))
@@ -382,7 +388,7 @@ func _after_route_landing(_lane: int) -> void:
 func _jump_to_lane(lane: int) -> bool:
 	if lane % 8 != 0:
 		var source := _nearest_float(lane - 1, _player.position.x)
-		await _walk_to({"platform": source, "offset": clampf(_player.position.x - source.position.x, -1.0, 1.0), "z_offset": -0.65}, false)
+		await _walk_to({"platform": source, "offset": clampf(_player.position.x - source.position.x, -0.9, 0.9), "z_offset": -0.55}, false)
 	for frame in range(1200):
 		var current: AnimatableBody3D = null
 		var dock_center: float = 0.0 if lane == 0 else _level.CHECKPOINT_POSITION.x
@@ -432,7 +438,7 @@ func _jump_to_lane(lane: int) -> bool:
 		Input.action_press("move_left", maxf(-direction, 0))
 		Input.action_press("move_right", maxf(direction, 0))
 		await _ticks(1)
-		if not _player.is_on_floor() or absf(_player.position.x - CoursePath.center_x(_player.position.z)) > _player.playable_half_width - 0.1:
+		if not _player.is_on_floor() or absf(_player.position.x - CoursePath.center_x(_player.position.z)) > ROUTE_GUIDE_HALF_WIDTH - 0.1:
 			_release_movement()
 			return false
 	_release_movement()

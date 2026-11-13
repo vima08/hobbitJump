@@ -1,4 +1,4 @@
-﻿extends Node3D
+extends Node3D
 ## Scenic home, local origin at ground level; face points toward +Z.
 const Art = preload("res://scripts/art_materials.gd")
 var _stone: Material
@@ -160,4 +160,3 @@ func _build_garden() -> void:
 			_box(Vector3(0.12, 0.7, 0.13), Vector3(side * (4.3 + index * 0.55), 0.35, 2.2), _wood)
 		_box(Vector3(2.2, 0.1, 0.13), Vector3(side * 5.12, 0.52, 2.2), _wood)
 		_box(Vector3(2.2, 0.1, 0.13), Vector3(side * 5.12, 0.25, 2.2), _wood)
-

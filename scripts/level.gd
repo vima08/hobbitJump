@@ -38,6 +38,7 @@ func _ready() -> void:
 	_build_environment()
 	_build_course()
 	add_child(Scenery.new())
+	add_child(load("res://scripts/river_landscape.gd").new())
 	$Player.respawned.connect($Camera.snap_to_target)
 
 
@@ -125,19 +126,20 @@ func _build_environment() -> void:
 	fill.light_color = Color("b6cbd1")
 	fill.light_energy = 0.48
 	add_child(fill)
-	var water := _box(self, Vector3(65, 0.15, 80), Vector3(0, -0.8, -24), Color("378f9d"))
+	var water := _box(self, Vector3(57, 0.15, 80), Vector3(-5.5, -0.8, -24), Color("378f9d"))
+	water.name = "UpperRiver"
 	_water_material = ShaderMaterial.new()
 	_water_material.shader = WATER_SHADER
 	water.material_override = _water_material
-	_platform("StartBank", Vector3(65, 2, 10.5), Vector3(0, -1, 11.25), GRASS)
+	# Start-shore grass and support share the generated slope in scenery.gd.
 	# Butt joints: bank edge -54.5 equals dock edge -54.5, no coplanar overlap.
-	_platform("EndBank", Vector3(65, 2, 12), Vector3(0, -1, -60.5), GRASS)
+	_platform("EndBank", Vector3(46, 2, 12), Vector3(-CoursePath.center_x(-60.5), -1, -60.5), GRASS)
 
 
 func _build_course() -> void:
 	_platform("StartDock", Vector3(11, 0.6, 3.5), Vector3(0, -0.3, 4.25), WOOD)
 	for index in range(PLATFORM_POSITIONS.size()):
-		for copy in range(-3, 4):
+		for copy in range(-4, 4):
 			var platform := AnimatableBody3D.new()
 			platform.set_script(FloatingPlatform)
 			platform.name = "Float%d_%d" % [index, copy + 3]
@@ -146,6 +148,7 @@ func _build_course() -> void:
 			platform.drift_speed = LANE_SPEEDS[index]
 			platform.lane_center_x = CoursePath.center_x(PLATFORM_POSITIONS[index].z)
 			platform.position = PLATFORM_POSITIONS[index] + Vector3(copy * 7.0 + platform.lane_center_x, 0, 0)
+			platform.position.x = wrapf(platform.position.x, -33.0, 23.0)
 			add_child(platform)
 	_platform("CheckpointDock", Vector3(DOCK_WIDTH, 0.6, 4), Vector3(0, -0.3, -24), WOOD)
 	_platform("EndDock", Vector3(DOCK_WIDTH, 0.6, 5), Vector3(0, -0.3, -52), WOOD)

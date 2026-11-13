@@ -1,10 +1,10 @@
 extends Node3D
-## Original, deterministic scenic geometry. No collision or gameplay state.
-## Kept outside the navigable river and the three landing approaches.
+## Deterministic woodland on the real Z shores and behind the inlet.
+## No scenery crosses the X-directed float lanes.
 
 const SURFACE: Shader = preload("res://shaders/scenery_surface.gdshader")
 const ATLAS: Texture2D = preload("res://assets/art/woodland-atlas-v1.png")
-const CoursePath = preload("res://scripts/course_path.gd")
+const CoursePath := preload("res://scripts/course_path.gd")
 var _rng := RandomNumberGenerator.new()
 var _stone: ShaderMaterial
 var _leaves: ShaderMaterial
@@ -23,6 +23,7 @@ func _ready() -> void:
 	_leaves.set_shader_parameter("foliage", 1.0)
 	_build_banks()
 	_build_vegetation()
+	_build_channel_islets()
 	_build_distance()
 
 
@@ -49,6 +50,10 @@ func _show(mesh: Mesh, material: Material, label: String) -> void:
 	instance.mesh = mesh
 	instance.material_override = material
 	add_child(instance)
+	if label.begins_with("InterRowTreeCrown") or label.begins_with("InterRowTreeTrunk"):
+		# Only the part obscuring the hero fades; other trees keep their material.
+		instance.material_override = material.duplicate()
+		instance.add_to_group("camera_soft_visuals")
 
 
 func _scatter(mesh: Mesh, material: Material, transforms: Array[Transform3D], label: String, shadows: bool = true) -> void:
@@ -68,7 +73,6 @@ func _scatter(mesh: Mesh, material: Material, transforms: Array[Transform3D], la
 
 
 func _placement(at: Vector3, size: Vector3, angle: float = 0.0) -> Transform3D:
-	at.x += CoursePath.center_x(at.z)
 	return Transform3D(Basis(Vector3.UP, angle).scaled(size), at)
 
 
@@ -101,64 +105,107 @@ func _branch(start: Vector3, end: Vector3, width: float, color: Color, end_width
 		_triangle(start + two, end + two * end_width, end + one * end_width, color)
 
 
-func _bank_edge(z: float) -> float:
-	# The lowest submerged toe remains outside the 17m navigable corridor.
-	return 11.5 + sin(z * 0.21) * 0.8 + sin(z * 0.64) * 0.4
-
-
 func _build_banks() -> void:
-	_begin()
+	# The actual river flows +X: only the Z shores have riverbank toes.
 	for side in [-1.0, 1.0]:
+		_begin()
 		var rows: Array[PackedVector3Array] = []
-		for index in 42:
-			var z := -69.0 + index * 2.15
-			var edge := _bank_edge(z)
-			var height := 2.3 + sin(z * 0.18) * 0.9
-			var center := CoursePath.center_x(z)
+		for index in 31:
+			var x := -37.0 + index * 2.0
+			var edge := 3.0 if side > 0 else -51.0
+			var wobble := sin(x * 0.28) * 0.28
 			rows.append(PackedVector3Array([
-				Vector3(center + side * (edge - 0.5), -1.3, z),
-				Vector3(center + side * edge, 0.35 + sin(z) * 0.15, z),
-				Vector3(center + side * (edge + 1.8), height, z),
-				Vector3(center + side * 20.0, height + 0.5, z),
-				Vector3(center + side * 31.0, height + 1.0, z)]))
+				Vector3(x, -1.4, edge + side * wobble),
+				Vector3(x, -0.05, edge + side * (1.2 + wobble)),
+				Vector3(x, 0.05, edge + side * 5.0),
+				Vector3(x, 1.6 + sin(x * 0.19) * 0.35, edge + side * 12.0),
+				Vector3(x, 2.7, edge + side * 23.0)]))
 		for row in range(rows.size() - 1):
 			for column in 4:
-				var color := Color("74705a") if column < 2 else Color("647345")
-				color = color.lightened(_rng.randf_range(-0.08, 0.08))
-				if side > 0:
-					_triangle(rows[row][column], rows[row + 1][column], rows[row][column + 1], color)
-					_triangle(rows[row][column + 1], rows[row + 1][column], rows[row + 1][column + 1], color)
-				else:
-					_triangle(rows[row][column], rows[row][column + 1], rows[row + 1][column], color)
-					_triangle(rows[row][column + 1], rows[row + 1][column + 1], rows[row + 1][column], color)
-	_show(_finish(), _stone, "LayeredRockBanks")
+				var color := Color("74705a") if column == 0 else Color("70814b")
+				color = color.lightened(_rng.randf_range(-0.06, 0.06))
+				_triangle(rows[row][column], rows[row + 1][column], rows[row][column + 1], color)
+				_triangle(rows[row][column + 1], rows[row + 1][column], rows[row + 1][column + 1], color)
+		# Start-shore support is made from the very same triangles as its visible
+		# slope. Keep the far shore decorative; its landing has separate support.
+		if side > 0:
+			_show_solid(_finish(), _stone, "StartShoreSlope")
+		else:
+			_show(_finish(), _stone, "FarShoreSlope")
+	_begin()
+	# The visible terrace ends exactly where the physical bank ends: x=23.
+	# Only land is closed; the falling-water span -51<z<3 remains open.
+	for side in [-1.0, 1.0]:
+		var edge := 3.0 if side > 0 else -51.0
+		var wobble := sin(23.0 * 0.28) * 0.28
+		var crest_height := 1.6 + sin(23.0 * 0.19) * 0.35
+		var end_depth := 13.0 if side > 0 else 16.0
+		var depths: Array[float] = [0.0, 1.2 + wobble, 5.0, 12.0, end_depth]
+		var heights: Array[float] = [-1.4, -0.05, 0.05, crest_height, lerpf(crest_height, 2.7, (end_depth - 12.0) / 11.0)]
+		for index in range(depths.size() - 1):
+			var a := Vector3(23, heights[index], edge + side * depths[index])
+			var b := Vector3(23, heights[index + 1], edge + side * depths[index + 1])
+			var c := Vector3(23, -10.15, b.z)
+			var d := Vector3(23, -10.15, a.z)
+			_triangle(a, b, c, Color("777760"))
+			_triangle(a, c, d, Color("686e5b"))
+	_show_solid(_finish(), _stone, "RightShoreCliffFaces")
 	_begin()
 	for side in [-1.0, 1.0]:
-		for index in 20:
-			var z := -64.0 + index * 4.0
-			var x: float = CoursePath.center_x(z) + side * (_bank_edge(z) + 0.6)
-			_ellipsoid(Vector3(x, 0.1, z), Vector3(0.95, 1.3, 2.1), Color("85806a"), 8, 5)
-	_show(_finish(), _stone, "WaterlineBoulders")
-	# The house receives irregular grassy hills behind and alongside its approach.
-	_begin()
-	for side in [-1.0, 1.0]:
-		_ellipsoid(Vector3(CoursePath.center_x(-61.5) + side * 10.0, -1.0, -61.5), Vector3(6.5, 3.5, 5.0), Color("70814b"), 18, 10)
-		_ellipsoid(Vector3(side * 18.0, -1.4, 12.5), Vector3(7.5, 2.8, 4.8), Color("70814b"), 18, 10)
-		# Exposed roots step down the rock shelves without reaching the waterway.
-		for index in 13:
-			var z := -59.0 + index * 5.0
-			var edge := _bank_edge(z)
-			var root_color := Color("685035")
-			var upper := Vector3(side * (edge + 3.8), 2.8 + sin(z * 0.18) * 0.8, z)
-			var joint := Vector3(side * (edge + 2.0), 1.65, z + 0.55)
-			var tip := Vector3(side * (edge + 0.25), 0.25, z + 1.2)
-			upper.x += CoursePath.center_x(upper.z)
-			joint.x += CoursePath.center_x(joint.z)
-			tip.x += CoursePath.center_x(tip.z)
-			_branch(upper, joint, 0.22, root_color, 0.72)
-			_branch(joint, tip, 0.16, root_color, 0.2)
-			_branch(joint, tip + Vector3(side * 0.6, 0.2, -1.5), 0.12, root_color, 0.15)
-	_show(_finish(), _leaves, "GardenMounds")
+		var shore_z := 6.0 if side > 0 else -55.5
+		for index in 10:
+			var x := -29.0 + index * 6.3
+			if absf(x) < 12.0 or x > 20.0:
+				continue
+			_ellipsoid(Vector3(x, -0.2, shore_z), Vector3(1.4, 0.9, 1.1), Color("85806a"), 9, 6)
+	_show(_finish(), _stone, "ShoreBoulders")
+
+func _show_solid(mesh: Mesh, material: Material, label: String) -> void:
+	_show(mesh, material, label)
+	var body := StaticBody3D.new()
+	body.name = label + "Collision"
+	if label.begins_with("InterRowTreeTrunk"):
+		body.add_to_group("camera_soft_bodies")
+	elif label == "RightShoreCliffFaces":
+		body.collision_layer = 5
+	var shape := mesh.create_trimesh_shape()
+	shape.backface_collision = true
+	var collision := CollisionShape3D.new()
+	collision.shape = shape
+	body.add_child(collision)
+	add_child(body)
+
+
+func _build_channel_islets() -> void:
+	# Four separate stony slivers live only at exact inter-row midpoints.
+	# The hull sweeps +/-0.9m in Z; these rocks stay within +/-0.31m
+	# of the midpoint, leaving at least 0.29m of water on either side.
+	var placements: Array[Vector2] = [Vector2(12, -1), Vector2(12, -13), Vector2(-12, -29), Vector2(-12, -41)]
+	for index in placements.size():
+		var z := placements[index].y
+		var at := Vector3(CoursePath.center_x(z) + placements[index].x, 0, z)
+		_begin()
+		_ellipsoid(at + Vector3(0, -0.42, 0), Vector3(1.75, 0.48, 0.29), Color("85806a"), 16, 8, 0.05)
+		_ellipsoid(at + Vector3(0.65, -0.40, 0), Vector3(0.72, 0.43, 0.27), Color("76805b"), 12, 7, 0.05)
+		_show_solid(_finish(), _stone, "InterRowStone%d" % index)
+		_begin()
+		var bark := Color("594a32")
+		_branch(at + Vector3(0, 0.04, 0), at + Vector3(0.15, 3.4, 0), 0.15, bark, 0.55)
+		for root in [-1.0, 1.0]:
+			_branch(at + Vector3(root * 0.65, 0.045, root * 0.10), at + Vector3(0, 0.55, 0), 0.065, bark, 1.5)
+		for limb in 5:
+			var angle := limb * 2.399 + index
+			var end := at + Vector3(cos(angle) * 1.05, 3.65 + (limb % 2) * 0.5, sin(angle) * 0.85)
+			_branch(at + Vector3(0.1, 2.8 + (limb % 2) * 0.2, 0), end, 0.09, bark)
+		_show_solid(_finish(), _leaves, "InterRowTreeTrunk%d" % index)
+		_begin()
+		for limb in 5:
+			var angle := limb * 2.399 + index
+			var center := at + Vector3(cos(angle) * 1.05, 3.85 + (limb % 2) * 0.5, sin(angle) * 0.85)
+			var color: Color = [Color("667d36"), Color("879440"), Color("4f713b")][limb % 3]
+			_ellipsoid(center, Vector3(1.15, 0.65, 1.05), color, 10, 6, 0.16)
+			_leaf_spray(center, Vector3(1.25, 0.72, 1.15), color, limb + index)
+		_show(_finish(), _leaves, "InterRowTreeCrown%d" % index)
 
 
 func _tree_mesh(variant: int) -> ArrayMesh:
@@ -254,71 +301,46 @@ func _build_vegetation() -> void:
 	var grass: Array[Transform3D] = []
 	var trees: Array = [[], [], []]
 	for side in [-1.0, 1.0]:
-		for index in 18:
-			var z := -66.0 + index * 4.6 + _rng.randf_range(-1.0, 1.0)
-			var x: float = side * _rng.randf_range(14.5, 23.0)
-			var scale_factor := _rng.randf_range(0.85, 1.3)
-			trees[index % 3].append(_placement(Vector3(x, 2.0, z), Vector3.ONE * scale_factor, _rng.randf() * TAU))
-		for index in 140:
-			var z := _rng.randf_range(-67.0, 16.0)
-			var x: float = side * _rng.randf_range(13.6, 21.0)
-			var y := 2.3 + sin(z * 0.18) * 0.9
-			var size := _rng.randf_range(0.65, 1.45)
-			bushes.append(_placement(Vector3(x, y, z), Vector3(size, size, size), _rng.randf() * TAU))
-		for index in 180:
-			var z := _rng.randf_range(-67.0, 15.5)
-			var x: float = side * _rng.randf_range(13.3, 21.0)
-			var y := 2.4 + sin(z * 0.18) * 0.9
-			ferns.append(_placement(Vector3(x, y, z), Vector3.ONE * _rng.randf_range(0.7, 1.4), _rng.randf() * TAU))
-		for index in 360:
-			var z := _rng.randf_range(-67.0, 16.0)
-			var x: float = side * _rng.randf_range(13.4, 24.0)
-			grass.append(_placement(Vector3(x, 2.4 + sin(z * 0.18) * 0.9, z), Vector3.ONE * _rng.randf_range(0.7, 1.7), _rng.randf() * TAU))
-	# Low garden plants frame the centre while preserving the 11m start path.
-	for index in 130:
-		var side := -1.0 if index % 2 == 0 else 1.0
-		var x: float = side * _rng.randf_range(6.8, 28.0)
-		var z := _rng.randf_range(9.0, 15.5) if index < 65 else _rng.randf_range(-65.5, -57.0)
-		var at := Vector3(x, 0.05, z)
-		grass.append(_placement(at, Vector3.ONE * _rng.randf_range(1.0, 1.7), _rng.randf() * TAU))
-		if index % 3 == 0:
-			ferns.append(_placement(at, Vector3.ONE * 0.8, _rng.randf() * TAU))
+		var edge := 3.0 if side > 0 else -51.0
+		for index in 24:
+			var x := -39.0 + index * 3.2 + _rng.randf_range(-0.7, 0.7)
+			var depth := _rng.randf_range(10.0, 21.0)
+			var at := Vector3(x, 1.4 + (depth - 10.0) * 0.08, edge + side * depth)
+			if x > 20.0:
+				at.z = 24.0 + depth * 0.2 if side > 0 else -76.0 - depth * 0.2
+			trees[index % 3].append(_placement(at, Vector3.ONE * _rng.randf_range(0.85, 1.25), index * 2.4))
+		for index in 210:
+			var x := _rng.randf_range(-37.0, 20.0)
+			var depth := _rng.randf_range(5.5, 20.0)
+			if absf(x) < 6.0 and depth < 10.0:
+				continue
+			var at := Vector3(x, maxf(0.08, (depth - 5.0) * 0.12), edge + side * depth)
+			var size := _rng.randf_range(0.65, 1.4)
+			grass.append(_placement(at, Vector3.ONE * size, index * 1.7))
+			ferns.append(_placement(at + Vector3(0.45, 0, 0.3), Vector3.ONE * size, index * 2.3))
+			if index % 3 == 0:
+				bushes.append(_placement(at, Vector3.ONE * size, index * 1.4))
+	for index in 17:
+		var at := Vector3(-37.5 - _rng.randf_range(0.0, 6.0), 4.3, 6.0 - index * 4.0)
+		trees[index % 3].append(_placement(at, Vector3.ONE * _rng.randf_range(0.9, 1.3), index * 1.5))
 	for variant in 3:
 		var placements: Array[Transform3D] = []
 		for placement in trees[variant]:
 			placements.append(placement)
-		if variant == 0:
-			for side in [-1.0, 1.0]:
-				placements.append(_placement(Vector3(side * 9.7, 0, 12.5), Vector3(0.73, 0.83, 0.73), side * 0.7))
-				placements.append(_placement(Vector3(side * 9.0, 0, -61.5), Vector3(0.85, 0.85, 0.85), side * 1.2))
-				for index in 5:
-					var z: float = 1.0 - index * 12.7 + side * 2.0
-					placements.append(_placement(Vector3(side * (_bank_edge(z) + 1.4), 1.4, z), Vector3(0.9, 0.95, 0.9), index * 1.5))
 		_scatter(_tree_mesh(variant), _leaves, placements, "BroadleafTrees%d" % variant)
 	for side in [-1.0, 1.0]:
 		for index in 12:
-			var foreground := Vector3(side * (3.2 + (index % 4) * 0.65), 0.04, 6.3 + index / 4 * 0.55)
-			ferns.append(_placement(foreground, Vector3.ONE * 0.65, index * 2.4))
-			grass.append(_placement(foreground, Vector3.ONE * 0.9, index * 1.7))
-		for index in 8:
-			var at := Vector3(side * (6.7 + (index % 3) * 1.1), 0.08, 8.05 + index * 0.55)
-			bushes.append(_placement(at, Vector3.ONE * (0.66 + (index % 2) * 0.16), index * 1.7))
-			ferns.append(_placement(at + Vector3(side * 0.2, 0, -0.5), Vector3.ONE * 0.9, index * 1.1))
+			var at := Vector3(side * (3.2 + (index % 4) * 0.65), 0.04, 6.3 + index / 4 * 0.55)
+			ferns.append(_placement(at, Vector3.ONE * 0.65, index * 2.4))
+			grass.append(_placement(at, Vector3.ONE * 0.9, index * 1.7))
 		for index in 9:
 			var at := Vector3(side * (5.5 + (index % 3) * 1.2), 0.08, -56.3 - index * 0.7)
 			bushes.append(_placement(at, Vector3.ONE * 0.9, index * 1.7))
-			ferns.append(_placement(at + Vector3(side * 1.2, 0, 0.4), Vector3.ONE, index * 1.1))
+			ferns.append(_placement(at, Vector3.ONE, index * 1.1))
 	_scatter(_bush_mesh(), _leaves, bushes, "LeafyUndergrowth")
 	_scatter(_fern_mesh(), _leaves, ferns, "RiverFerns", false)
 	_scatter(_grass_mesh(), _leaves, grass, "GoldenGrass", false)
 	_build_flowers()
-	_begin()
-	for side in [-1.0, 1.0]:
-		for index in 6:
-			var at := Vector3(side * (6.3 + (index % 2) * 1.8), 0.02, 8.1 + index * 0.9)
-			_ellipsoid(at, Vector3(0.5, 0.28 + index % 2 * 0.12, 0.45), Color("8b866a"), 8, 5)
-	_show(_finish(), _stone, "GardenEdgingRocks")
-
 
 func _build_flowers() -> void:
 	_begin()
